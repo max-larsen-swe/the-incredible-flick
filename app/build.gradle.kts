@@ -1,3 +1,14 @@
+import java.util.Properties
+
+val apiKeysProperties = Properties()
+val apiKeysPropertiesFile = rootProject.file("flickr.properties")
+if (apiKeysPropertiesFile.exists()) {
+    apiKeysPropertiesFile.inputStream().use { apiKeysProperties.load(it) }
+}
+
+val apiKey: String = apiKeysProperties["API_KEY"] as String
+val apiSecret: String = apiKeysProperties["API_SECRET"] as String
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -18,6 +29,9 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        buildConfigField("String", "API_KEY", "\"$apiKey\"")
+        buildConfigField("String", "API_SECRET", "\"$apiSecret\"")
     }
 
     buildTypes {
@@ -38,6 +52,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.1"

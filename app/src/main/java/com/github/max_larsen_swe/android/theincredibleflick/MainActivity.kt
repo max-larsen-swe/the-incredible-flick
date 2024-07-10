@@ -1,6 +1,7 @@
 package com.github.max_larsen_swe.android.theincredibleflick
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -74,8 +75,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 object Keys {
-    const val API = "api_key"
-    const val SECRET = "secret"
+    lateinit var API: String
+    lateinit var SECRET: String
+    private var initialized: Boolean = false
+    fun initialize(apiKey: String, apiSecret: String) {
+        if (initialized)
+            return
+
+        API = apiKey
+        SECRET = apiSecret
+
+        initialized = true
+    }
 }
 
 /*
@@ -257,6 +268,7 @@ object Data {
 }
 
 object Backend {
+
     val TAG: String = Backend::class.java.simpleName
 
     object API {
@@ -328,11 +340,16 @@ object Backend {
     }
 
     object DownloadManager {
+        private lateinit var cacheDir: String
         private val mutex: Mutex = Mutex()
         private val downloader: OkHttpClient = OkHttpClient()
 
-        private fun buildCachedUri(context: Context, fileUrl: String): String {
-            return Paths.get(context.cacheDir.path.toString(), fileUrl).toString()
+        fun initialize(cacheDir: String) {
+            this.cacheDir = cacheDir
+        }
+
+        private fun buildCachedUri(fileUrl: String): String {
+            return Paths.get(cacheDir, fileUrl).toString()
         }
 
         private fun urlToDownloadPathString(url: String, suffix: String? = null): String {
@@ -368,9 +385,9 @@ object Backend {
             return true
         }
 
-        suspend fun getCachedOrDownloadedLocalUri(context: Context, remoteUri: String): String? {
+        suspend fun getCachedOrDownloadedLocalUri(remoteUri: String): String? {
             return withContext(Dispatchers.IO) {
-                var localUri: String? = buildCachedUri(context, urlToDownloadPathString(remoteUri))
+                var localUri: String? = buildCachedUri(urlToDownloadPathString(remoteUri))
                 mutex.withLock { //limit to only one download at a time
                     if (Files.notExists(Paths.get(localUri))) {
                         if (!runDownload(remoteUri, localUri!!)) {
@@ -385,17 +402,13 @@ object Backend {
     }
 }
 
-class MainActivity : AppCompatActivity() {
-
+class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Keys.initialize(BuildConfig.API_KEY,BuildConfig.API_SECRET)
+        Backend.DownloadManager.initialize(cacheDir.path)
         var state: Data.DC = Data.DC()
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                state = Backend.API.textSearchForPhotoList("Yorkshire")
-            }
-        }
-        setContent { UI.App(this, state) }
+        setContent { UI.App(state) }
     }
 
 }
@@ -411,18 +424,22 @@ object UI {
     }
 
     @Composable
-    fun App(context: Context, state: Data.DC) {
+    fun App(state: Data.DC) {
         var _state: SnapshotStateList<Data.DC> = remember { mutableStateListOf(state) }
+        LaunchedEffect(_state) {
+            _state.add(Backend.API.textSearchForPhotoList("Yorkshire"))
+        }
         TheIncredibleFlickTheme {
             // A surface container using the 'background' color from the theme
             Surface(
                 modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.background
+                color = Style.Colors.BACKGROUND,
+                contentColor = Style.Colors.TEXT
             ) {
                 when(_state.last().type){
                     Data.DCType.Photo -> Text("Photo details view to be continued")
                     Data.DCType.User -> Text("User details view to be continued")
-                    Data.DCType.PhotoList -> PhotoPostList(context = context , photosList = _state as Data.PhotoList)
+                    Data.DCType.PhotoList -> PhotoPostList(photosList = _state.last() as Data.PhotoList)
                     else -> {Text("L O A D I N G . . .")}
                 }
             }
@@ -430,7 +447,7 @@ object UI {
     }
 
     @Composable
-    fun PhotoPostList(context: Context, photosList: Data.PhotoList, modifier: Modifier = Modifier) {
+    fun PhotoPostList(photosList: Data.PhotoList, modifier: Modifier = Modifier) {
         if (photosList.photos.isEmpty()) {
             Text("L O A D I N G . . .")
         }
@@ -441,7 +458,6 @@ object UI {
         ) {
             items(count = photosList.photos.size) { index ->
                 PhotoItem(
-                    context = context,
                     photoData = photosList.photos[index]
                 )
             }
@@ -451,14 +467,14 @@ object UI {
     @OptIn(ExperimentalLayoutApi::class)
     @Composable
     fun PhotoItem(
-        context: Context, photoData: Data.Photo, modifier: Modifier = Modifier
+        photoData: Data.Photo, modifier: Modifier = Modifier
     ) {
         var localPhotoUri: String by remember { mutableStateOf("") }
         var localIconUri: String by remember { mutableStateOf("") }
         var flickrUser: Data.User? by remember { mutableStateOf(null) }
         LaunchedEffect(localPhotoUri, localIconUri, flickrUser) {
             localPhotoUri =
-                Backend.DownloadManager.getCachedOrDownloadedLocalUri(context, photoData.remoteUri)
+                Backend.DownloadManager.getCachedOrDownloadedLocalUri(photoData.remoteUri)
                     ?: ""
             if (localPhotoUri.isNotEmpty()) {
                 if (photoData.tags.isEmpty()) {
@@ -467,7 +483,7 @@ object UI {
                 if (flickrUser == null) {
                     flickrUser = Backend.API.getUserData(photoData.owner)
                     localIconUri = Backend.DownloadManager
-                        .getCachedOrDownloadedLocalUri(context, flickrUser!!.iconRemoteUri) ?: ""
+                        .getCachedOrDownloadedLocalUri(flickrUser!!.iconRemoteUri) ?: ""
                 }
             }
         }
